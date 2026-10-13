@@ -1,0 +1,57 @@
+# Example Home Assistant automation: Telegram message when water flows for more than 10 minutes,
+# with today's use of every named meter (see docs/images/example_telegram.png).
+# Needs the Telegram bot integration set up in Home Assistant.
+# Paste into Settings > Automations > Create automation > (three dots) Edit in YAML.
+alias: "Water flowing > 10 min (Telegram)"
+mode: single
+max_exceeded: silent
+triggers:
+  - trigger: template
+    value_template: >-
+      {{ integration_entities('mqtt') | select('match', 'sensor\.')
+         | select('is_state_attr', 'unit_of_measurement', 'L/min')
+         | expand | rejectattr('name', 'search', 'flow now')
+         | map(attribute='state') | map('float', 0) | select('gt', 0) | list | count > 0 }}
+    for:
+      minutes: 10
+actions:
+  - variables:
+      flow_ents: >-
+        {{ integration_entities('mqtt') | select('match', 'sensor\.')
+           | select('is_state_attr', 'unit_of_measurement', 'L/min')
+           | expand | rejectattr('name', 'search', 'flow now')
+           | map(attribute='entity_id') | list }}
+      flowing: >-
+        {%- set ns = namespace(l=[]) -%}
+        {%- for e in flow_ents if states(e) | float(0) > 0 -%}
+          {%- set name = state_attr(e, 'friendly_name') | replace('Arad ', '', 1) | replace(' Water flow', '') -%}
+          {%- set today = device_entities(device_id(e)) | select('match', 'sensor\.')
+                          | select('is_state_attr', 'unit_of_measurement', 'L') | first | default('') -%}
+          {%- set ns.l = ns.l + ['🔵 ' ~ name ~ ' – ' ~ (states(e) | float(0) | round(1)) ~ ' L/min (today ' ~ (states(today) | float(0) | round(0) | int) ~ ' L)'] -%}
+        {%- endfor -%}
+        {{ ns.l | join('\n') }}
+      today: >-
+        {%- set ns = namespace(l=[], total=0) -%}
+        {%- for e in flow_ents -%}
+          {%- set name = state_attr(e, 'friendly_name') | replace('Arad ', '', 1) | replace(' Water flow', '') -%}
+          {%- set today = device_entities(device_id(e)) | select('match', 'sensor\.')
+                          | select('is_state_attr', 'unit_of_measurement', 'L') | first | default('') -%}
+          {%- set t = states(today) | float(0) if today else 0 -%}
+          {%- set ns.total = ns.total + t -%}
+          {%- set ns.l = ns.l + ['🏠 ' ~ name ~ ': ' ~ (t | round(0) | int) ~ ' L'] -%}
+        {%- endfor -%}
+        {{ (ns.l + ['🔢 *Total today:* ' ~ (ns.total | round(0) | int) ~ ' L (' ~ (ns.total / 1000) | round(2) ~ ' m³)']) | join('\n') }}
+  - action: telegram_bot.send_message
+    data:
+      # config_entry_id: YOUR_BOT_ENTRY_ID   # only needed if you have more than one Telegram bot
+      message: |-
+        🚿 *Water flowing for more than 10 minutes!*
+        ⏱️ {{ now().strftime('%H:%M') }} · 📅 {{ now().strftime('%d/%m/%Y') }}
+
+        💧 *Flowing now:*
+        {{ flowing }}
+
+        📊 *Today, all meters:*
+        {{ today }}
+
+        💡 Check for an open tap, irrigation or a leak.
