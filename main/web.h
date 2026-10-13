@@ -47,10 +47,10 @@ static int64_t epoch_of(uint32_t ms) {
   return (int64_t)time(NULL) - (int64_t)(millis() - ms) / 1000;
 }
 static int fmt_pkt(char *b, int n, const WMeter &m, const WPkt &p) {
-  return snprintf(b, n, "{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":%u,\"gear\":%.3f,\"volume\":%.3f,\"unit\":\"%s\",\"corrections\":%u,"
-                  "\"rssi\":%.1f,\"snr\":%.1f,\"seq\":%lu,\"ts\":%lld,\"age_s\":%lu,\"replay\":1}",
+  return snprintf(b, n, "{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":%u,\"gear\":%.3f,\"volume\":%.4f,\"unit\":\"%s\",\"corrections\":%u,"
+                  "\"rssi\":%.1f,\"snr\":%.1f,\"seq\":%lu,\"ts\":%lld,\"age_s\":%lu,\"scale\":%g,\"scale_own\":%d,\"replay\":1}",
                   m.id, p.leak, m.gear, p.vol, m.unit, p.corr, p.rssi, p.snr, (unsigned long)p.seq, (long long)epoch_of(p.ms),
-                  (unsigned long)((millis() - p.ms) / 1000));
+                  (unsigned long)((millis() - p.ms) / 1000), scale_of(m.id), scale_own(m.id) ? 1 : 0);
 }
 
 // ---------------- WebSocket
@@ -152,6 +152,48 @@ static void web_start() {
     mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
   }
   OUT("{\"type\":\"info\",\"msg\":\"web page: http://arad.local/  or  http://%s/\"}", ip_str);
+}
+// reading scale of a meter changed: convert its stored history
+static void web_rescale(const char *id, double ratio) {
+  xSemaphoreTake(wmtx, portMAX_DELAY);
+  for (int i = 0; i < nwh; i++) if (!strcmp(wh[i].id, id)) {
+    for (int k = 0; k < WH_CH; k++) wh[i].ch[k].vol *= ratio;
+    wh[i].last.vol *= ratio;
+  }
+  xSemaphoreGive(wmtx);
+}
+// scale all <f> | scale <meter id> <f> | scale <meter id> default
+static bool scale_cmd(const char *args) {
+  char a[16] = {0}, b[16] = {0};
+  if (sscanf(args, "%15s %15s", a, b) != 2) { OUT("{\"type\":\"info\",\"msg\":\"usage: scale all <1|0.1|0.01|0.001>  or  scale <meter id> <1|0.1|0.01|0.001|default>\"}"); return true; }
+  if (!strcmp(a, "all")) {
+    int32_t nm = scale_factor_parse(b), om = scale_global();
+    if (!nm) { OUT("{\"type\":\"info\",\"msg\":\"scale: use 1, 0.1, 0.01 or 0.001\"}"); return true; }
+    scale_set_global(nm);
+    if (nm != om) {
+      double ratio = (double)nm / om;
+      for (int i = 0; i < ntrk; i++) if (!scale_own(trk[i].id)) track_rescale(trk[i].id, ratio);   // meters that follow the default
+      char ids[WH_MAX][16]; int n = 0;
+      xSemaphoreTake(wmtx, portMAX_DELAY);
+      for (int i = 0; i < nwh; i++) strcpy(ids[n++], wh[i].id);
+      xSemaphoreGive(wmtx);
+      for (int i = 0; i < n; i++) if (!scale_own(ids[i])) {
+        web_rescale(ids[i], ratio);
+        OUT("{\"type\":\"scale\",\"id\":\"%s\",\"scale\":%g,\"scale_own\":0}", ids[i], nm / 1000.0);
+      }
+    }
+    OUT("{\"type\":\"info\",\"msg\":\"reading scale for all meters: x%g (meters with their own scale keep it)\"}", nm / 1000.0);
+    return true;
+  }
+  int32_t own = strcmp(b, "default") ? scale_factor_parse(b) : 0;
+  if (own == 0 && strcmp(b, "default")) { OUT("{\"type\":\"info\",\"msg\":\"scale: use 1, 0.1, 0.01, 0.001 or default\"}"); return true; }
+  int32_t om = scale_milli(a);
+  scale_set_own(a, own);
+  int32_t nm = scale_milli(a);
+  if (nm != om) { double ratio = (double)nm / om; track_rescale(a, ratio); web_rescale(a, ratio); }
+  OUT("{\"type\":\"scale\",\"id\":\"%s\",\"scale\":%g,\"scale_own\":%d}", a, nm / 1000.0, own ? 1 : 0);
+  OUT("{\"type\":\"info\",\"msg\":\"meter %s: reading scale x%g%s\"}", a, nm / 1000.0, own ? "" : " (same as all meters)");
+  return true;
 }
 static int nwh_count() { return nwh; }
 static int web_clients_count() { return ws_clients; }

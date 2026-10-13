@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2
+- Reading scale can be set **for all meters** (`scale all <factor>`) and overridden **per meter** (`scale <id> <factor>`; `scale <id> default` to follow the global setting again). Both are in Settings → Meters.
+
+## 3.1
+- Per-meter **reading scale** (×1 / ×0.1 / ×0.01) for meters that report a 10× or 100× bigger reading. Set it in Settings → Meters or with `scale <id> <factor>`; reading, today, flow and Home Assistant are converted.
+- Readings are shown with the meter's real resolution (up to 4 decimals).
+- Web page: click a column header in the meters table to sort by it.
+
 ## 3.0
 - Built-in web page over Wi-Fi: http://arad.local/ (or the board's IP). Same page also works offline over USB.
 - Every meter you name is added to Home Assistant automatically (MQTT discovery); unnamed meters stay off Home Assistant.

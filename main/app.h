@@ -15,6 +15,8 @@
 #include "mqtt_client.h"
 #include "ui.h"
 static void web_start();
+static void web_rescale(const char *id, double ratio);
+static bool scale_cmd(const char *args);
 static int nwh_count();
 static int web_clients_count();
 
@@ -261,6 +263,21 @@ static int track_update(const char *id, double vol, float rssi, float snr, int l
   return i;
 }
 
+// reading scale changed: convert everything stored for this meter so "today" and flow stay continuous
+static void track_rescale(const char *id, double ratio) {
+  xSemaphoreTake(mtx, portMAX_DELAY);
+  int i = track_find(id);
+  if (i >= 0) {
+    Tracked &t = trk[i];
+    t.vol *= ratio; t.day_base *= ratio; t.flow *= ratio;
+    if (t.now_rate > 0) t.now_rate *= ratio;
+    for (int k = 0; k < HIST_N; k++) t.hist[k].v *= ratio;
+    for (int h = 0; h < 24; h++) t.hourly[h] *= ratio;
+    if (t.seen) day_save(i);
+  }
+  xSemaphoreGive(mtx);
+}
+
 // raw packet of every meter -> MQTT; state of named meters -> MQTT (Home Assistant); state of every shown meter -> web page
 static void publish_packet(int ti, const char *id, const char *json_line) {
   char topic[48];
@@ -272,8 +289,8 @@ static void publish_packet(int ti, const char *id, const char *json_line) {
   Tracked &t = trk[ti];
   float fn = flow_now(t, millis());
   bool named = t.named;
-  snprintf(p, sizeof p, "{\"volume\":%.3f,\"flow_lpm\":%.1f,\"flow_now\":%.1f,\"flowing\":%d,\"today_l\":%.0f,\"rssi\":%.1f,\"snr\":%.1f,\"leaking\":%d,\"pkt_s\":%.0f,\"name\":\"%s\"}",
-           t.vol, t.flow, fn, fn > 0 ? 1 : 0, (t.vol - t.day_base) * 1000.0, t.rssi, t.snr, t.leaking, t.pkt_iv / 1000.0f, t.name);
+  snprintf(p, sizeof p, "{\"volume\":%.4f,\"flow_lpm\":%.1f,\"flow_now\":%.1f,\"flowing\":%d,\"today_l\":%.0f,\"rssi\":%.1f,\"snr\":%.1f,\"leaking\":%d,\"pkt_s\":%.0f,\"scale\":%g,\"scale_own\":%d,\"name\":\"%s\"}",
+           t.vol, t.flow, fn, fn > 0 ? 1 : 0, (t.vol - t.day_base) * 1000.0, t.rssi, t.snr, t.leaking, t.pkt_iv / 1000.0f, scale_of(t.id), scale_own(t.id) ? 1 : 0, t.name);
   xSemaphoreGive(mtx);
   if (named) { snprintf(topic, sizeof topic, "arad/meter/%s/state", id); mqtt_pub(topic, p, true); }
   OUT("{\"type\":\"meter\",\"id\":\"%s\",%s", id, p + 1);
@@ -546,12 +563,13 @@ static bool extra_cmd(char *s) {
     OUT("{\"type\":\"info\",\"msg\":\"%s %s\"}", s + 7, i >= 0 ? "name removed" : "not found");
     return true;
   }
+  if (!strncmp(s, "scale ", 6)) return scale_cmd(s + 6);   // see web.h
   if (!strcmp(s, "meters")) {
     xSemaphoreTake(mtx, portMAX_DELAY);
     for (int i = 0; i < ntrk; i++)
-      OUT("{\"type\":\"meter\",\"id\":\"%s\",\"name\":\"%s\",\"seen\":%d,\"volume\":%.3f,\"flow_lpm\":%.1f,\"flow_now\":%.1f,\"today_l\":%.0f,\"rssi\":%.1f,\"age_s\":%lu}",
+      OUT("{\"type\":\"meter\",\"id\":\"%s\",\"name\":\"%s\",\"seen\":%d,\"volume\":%.4f,\"flow_lpm\":%.1f,\"flow_now\":%.1f,\"today_l\":%.0f,\"rssi\":%.1f,\"age_s\":%lu,\"scale\":%g,\"scale_own\":%d}",
           trk[i].id, trk[i].name, trk[i].seen, trk[i].vol, trk[i].flow, flow_now(trk[i], millis()), trk[i].seen ? (trk[i].vol - trk[i].day_base) * 1000 : 0.0,
-          trk[i].rssi, (unsigned long)(trk[i].seen ? (millis() - trk[i].last_ms) / 1000 : 0));
+          trk[i].rssi, (unsigned long)(trk[i].seen ? (millis() - trk[i].last_ms) / 1000 : 0), scale_of(trk[i].id), scale_own(trk[i].id) ? 1 : 0);
     xSemaphoreGive(mtx);
     return true;
   }

@@ -19,7 +19,7 @@
 #include "board.h"
 #include "arad_decode.h"
 
-#define FW_VERSION "3.0"
+#define FW_VERSION "3.2"
 
 #define PAYLOAD_LEN 40              // chip bytes after the 32-chip sync (raw F5 13 85 37 + 16 bytes)
 #define CHIP_RATE 119047.6          // 8.4 us Manchester chips
@@ -61,16 +61,17 @@ static void sync_bytes(uint8_t *s) { for (int i = 0; i < 4; i++) s[i] = cur_pol 
 #include "radio_sx1276.h"
 #endif
 
+#include "scale.h"
 #include "app.h"
 #include "web.h"
 
 static void print_status() {
   OUT("{\"type\":\"status\",\"fw\":\"" FW_VERSION "\",\"board\":\"" BOARD_NAME "\",\"radio\":\"" RADIO_NAME "\",\"bw_options\":\"" RADIO_BW_LIST "\",\"uptime_s\":%lu,\"freq_mhz\":%.3f,\"bw_khz\":%d,\"pol\":%d,\"pol_mode\":\"%s\",\"noise\":%.1f,"
       "\"peak_rssi\":%.1f,\"preambles\":%lu,\"syncs\":%lu,\"captures\":%lu,\"decoded\":%lu,\"failed\":%lu,\"radio_errors\":%lu,"
-      "\"wifi\":%d,\"mqtt\":%d,\"ip\":\"%s\",\"ssid\":\"%s\",\"mqtt_uri\":\"%s\",\"show\":\"%s\",\"tracked\":%d,\"named\":%d,\"tz\":\"%s\",\"heard\":%d,\"web_clients\":%d}",
+      "\"wifi\":%d,\"mqtt\":%d,\"ip\":\"%s\",\"ssid\":\"%s\",\"mqtt_uri\":\"%s\",\"show\":\"%s\",\"tracked\":%d,\"named\":%d,\"tz\":\"%s\",\"heard\":%d,\"web_clients\":%d,\"scale_all\":%g}",
       (unsigned long)(millis() / 1000), freq_mhz, bw_khz, cur_pol, pol >= 0 ? "fixed" : (locked ? "auto-locked" : "auto-searching"),
       noise, peak, (unsigned long)n_pre, (unsigned long)n_sync, (unsigned long)n_rx, (unsigned long)n_ok, (unsigned long)n_fail,
-      (unsigned long)radio_errors(), wifi_up, mqtt_up, ip_str, cfg_ssid, cfg_mqtt_uri, show_named ? "named" : "all", ntrk, count_named(), cfg_tz, nwh, (int)ws_clients);
+      (unsigned long)radio_errors(), wifi_up, mqtt_up, ip_str, cfg_ssid, cfg_mqtt_uri, show_named ? "named" : "all", ntrk, count_named(), cfg_tz, nwh, (int)ws_clients, scale_global() / 1000.0);
 }
 
 static void handle_packet(const uint8_t *p, float rssi) {
@@ -84,10 +85,12 @@ static void handle_packet(const uint8_t *p, float rssi) {
     n_ok++;
     if (pol < 0 && !locked) { locked = true; nvs_seti("pol", cur_pol); }
     char id[16]; snprintf(id, sizeof id, "%08lu-%02x", (unsigned long)r.serial, r.suffix);
-    OUT("{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":%d,\"flags1\":%u,\"gear\":%.3f,\"volume\":%.3f,"
+    double sc = scale_of(id);                          // per-meter reading scale (x1 / x0.1 / x0.01)
+    r.volume *= sc;
+    OUT("{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":%d,\"flags1\":%u,\"gear\":%.3f,\"volume\":%.4f,\"scale\":%g,\"scale_own\":%d,"
         "\"unit\":\"%s\",\"flags2\":%u,\"b9\":%u,\"corrections\":%d,\"mic\":\"CHECKSUM\",\"rssi\":%.1f,\"snr\":%.1f,\"noise\":%.1f,"
         "\"manchester_errs\":%d,\"seq\":%lu,\"ts\":%lld}",
-        id, r.leaking, r.flags1, r.gear, r.volume, r.unit, r.flags2, r.b9, r.corrections,
+        id, r.leaking, r.flags1, r.gear, r.volume, sc, scale_own(id) ? 1 : 0, r.unit, r.flags2, r.b9, r.corrections,
         rssi, rssi - noise, noise, r.manchester_errs, (unsigned long)++seq, (long long)(time_ok() ? time(NULL) : 0));
     static char line[768]; strcpy(line, obuf);
     web_record(id, r, rssi, rssi - noise, seq);
@@ -107,7 +110,7 @@ static void handle_packet(const uint8_t *p, float rssi) {
 
 static const char *HELP =
   "{\"type\":\"info\",\"msg\":\"commands: wifi <ssid> | wifipass <password> | mqtt <mqtt://host:1883> | mqttuser <user> | mqttpass <password> | "
-  "mqtt off | name <meter id> <label> | unname <meter id> | show all|named | tz <POSIX TZ> | meters | freq <MHz> | bw <kHz> | dev <kHz> | "
+  "mqtt off | name <meter id> <label> | unname <meter id> | scale all|<meter id> 1|0.1|0.01|default | show all|named | tz <POSIX TZ> | meters | freq <MHz> | bw <kHz> | dev <kHz> | "
   "pol 0|1|auto | raw on|off | reboot | factory | status\"}";
 
 static void handle_cmd(char *s) {
@@ -125,8 +128,8 @@ static void handle_cmd(char *s) {
 #if CONFIG_ETH_USE_OPENETH
   else if (!strncmp(s, "fake ", 5)) {   // emulator test build only: fake <meter id> <m3>
     AradResult r; memset(&r, 0, sizeof r); r.ok = true; r.gear = 0.01f; r.unit = "m3";
-    char id[16] = {0}; double v = 0; sscanf(s + 5, "%15s %lf", id, &v); r.volume = v;
-    OUT("{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":0,\"gear\":0.010,\"volume\":%.3f,\"unit\":\"m3\",\"corrections\":0,\"rssi\":-90.0,\"snr\":20.0,\"seq\":%lu,\"ts\":0}", id, v, (unsigned long)++seq);
+    char id[16] = {0}; double v = 0; sscanf(s + 5, "%15s %lf", id, &v); v *= scale_of(id); r.volume = v;
+    OUT("{\"model\":\"AradMsMeter-Dialog3G\",\"id\":\"%s\",\"leaking\":0,\"gear\":0.010,\"volume\":%.4f,\"scale\":%g,\"scale_own\":%d,\"unit\":\"m3\",\"corrections\":0,\"rssi\":-90.0,\"snr\":20.0,\"seq\":%lu,\"ts\":0}", id, v, scale_of(id), scale_own(id) ? 1 : 0, (unsigned long)++seq);
     static char line[768]; strcpy(line, obuf);
     web_record(id, r, -90, 20, seq); int ti = track_update(id, v, -90, 20, 0); publish_packet(ti, id, line);
   }

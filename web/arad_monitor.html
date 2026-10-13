@@ -53,6 +53,11 @@ table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-weight:600;font-size:12px}
 tbody tr{cursor:pointer}
+th[data-sort]{cursor:pointer;user-select:none}
+th[data-sort]:hover{color:var(--ink)}
+th[data-sort].sorted{color:var(--accent)}
+th[data-sort].sorted::after{content:' ▼';font-size:9px}
+th[data-sort].sorted.asc::after{content:' ▲'}
 tbody tr:hover{background:var(--track)}
 tbody tr.sel{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 .num{text-align:right}
@@ -119,9 +124,9 @@ details summary{cursor:pointer;color:var(--muted)}
     <div class="tablewrap" style="margin-top:10px">
       <table>
         <thead><tr>
-          <th>Meter ID</th><th>Name</th><th class="num">Flow now<div class="muted" style="font-size:10px;font-weight:400">L/min</div></th><th class="num">Today</th><th class="num">Current reading</th><th class="num">Previous reading</th><th class="num">Change</th>
-          <th>Last seen</th><th class="num">Packets</th><th class="num">Last RSSI</th><th class="num">Best RSSI</th>
-          <th class="num">Last SNR</th><th class="num">Best SNR</th><th>Status</th>
+          <th data-sort="id">Meter ID</th><th data-sort="name">Name</th><th class="num" data-sort="flow">Flow now<div class="muted" style="font-size:10px;font-weight:400">L/min</div></th><th class="num" data-sort="today">Today</th><th class="num" data-sort="cur">Current reading</th><th class="num" data-sort="prev">Previous reading</th><th class="num" data-sort="chg">Change</th>
+          <th data-sort="seen">Last seen</th><th class="num" data-sort="count">Packets</th><th class="num" data-sort="rssi">Last RSSI</th><th class="num" data-sort="brssi">Best RSSI</th>
+          <th class="num" data-sort="snr">Last SNR</th><th class="num" data-sort="bsnr">Best SNR</th><th data-sort="status">Status</th>
         </tr></thead>
         <tbody id="meterRows"><tr><td colspan="14" class="empty">No meters yet. Connect the receiver over USB (or start rtl_433).</td></tr></tbody>
       </table>
@@ -209,6 +214,11 @@ details summary{cursor:pointer;color:var(--muted)}
         <label>Meter<select id="sMeter"><option value="">— no meters heard yet —</option></select></label>
         <label>Name (up to 15 characters)<input id="sName" maxlength="15" placeholder="e.g. Home"></label>
         <div class="row"><button id="sNameBtn" class="primary">Save name</button><button id="sUnnameBtn">Remove name</button></div>
+        <label>Reading scale – this meter<select id="sScale"><option value="default">Same as all meters</option><option value="1">×1 – as received</option><option value="0.1">×0.1 – reading is 10× too big</option><option value="0.01">×0.01 – reading is 100× too big</option></select></label>
+        <div class="row"><button id="sScaleBtn">Save for this meter</button></div>
+        <label>Reading scale – all meters<select id="sScaleAll"><option value="1">×1 – as received</option><option value="0.1">×0.1 – readings are 10× too big</option><option value="0.01">×0.01 – readings are 100× too big</option></select></label>
+        <div class="row"><button id="sScaleAllBtn">Save for all meters</button></div>
+        <div class="hint">Compare with the meter's display: if the page shows 1719.24 but the meter shows 171.924 m³, choose ×0.1. "All meters" applies to every meter that has no scale of its own. "Today" and flow are corrected too.</div>
         <label>Show on the screen<select id="sShow"><option value="all">Every meter heard (default)</option><option value="named">Only meters I named</option></select></label>
         <div class="hint">Every meter you name is added to Home Assistant automatically (needs MQTT). Remove the name to remove it.</div>
       </fieldset>
@@ -274,10 +284,17 @@ function ago(ms){
 }
 function tstr(ms){ const d=new Date(ms); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }
 function hms(ms){ return new Date(ms).toLocaleTimeString(); }
-function volStr(m, v){ return v==null ? '–' : (+v).toFixed(m.gear && m.gear<0.1 ? 2 : 1)+' '+(m.unit||''); }
+function dec(m){ const r = (m.gear||0.1) * (m.scale||1); return Math.max(1, Math.min(4, Math.round(-Math.log10(r)))); }   // decimals = meter resolution
+function volStr(m, v){ return v==null ? '–' : (+v).toFixed(dec(m))+' '+(m.unit||''); }
 function colorOf(id){ const ids = Object.keys(state.meters).sort(); return COLORS[Math.max(0,ids.indexOf(id)) % COLORS.length]; }
 
 // ---------- event handling ----------
+// the board multiplies readings by the meter's scale; when it changes, convert what this browser stored
+function rescaleMeter(m, sc){
+  if(!sc || m.scale === sc) return;
+  if(m.scale){ const k = sc / m.scale; m.readings.forEach(r => r.vol *= k); if(m.last && m.last.vol!=null) m.last.vol *= k; }
+  m.scale = sc;
+}
 function handleEvent(ev){
   if(!ev || ev.model !== MODEL || !ev.id) return;
   // replayed history from the board carries its age; live packets are "now"
@@ -295,6 +312,8 @@ function handleEvent(ev){
       readings:[], sig:[], bestRssi:null, bestRssiAt:null, bestSnr:null, bestSnrAt:null, last:null };
   }
   m.unit = ev.unit; m.gear = ev.gear; m.count++;
+  rescaleMeter(m, typeof ev.scale === 'number' ? ev.scale : 1);
+  if(ev.scale_own != null) m.scaleOwn = !!ev.scale_own;
   // flow now = change since this meter's previous packet (if that packet is at most 5 min older)
   if(m.last && m.last.vol!=null){
     const dt = (t - m.last.t)/60000;
@@ -318,7 +337,7 @@ function handleEvent(ev){
     lastR.lastSeen = t;
   }
 
-  log.unshift({ t, id:ev.id, vol:ev.volume, unit:ev.unit, rssi, snr, corr:ev.corrections||0 });
+  log.unshift({ t, id:ev.id, vol:ev.volume, unit:ev.unit, rssi, snr, corr:ev.corrections||0, dec:dec(m) });
   if(log.length > 60) log.length = 60;
 
   if(!state.tracked) state.tracked = ev.id;
@@ -410,8 +429,60 @@ function updateAgo(){
   $('tNext').style.color = s > 75 ? 'var(--bad)' : '';
 }
 
+// ---------- table sorting: click a header (click again to reverse) ----------
+function flowVal(id){
+  const f = devFlow[id], m = state.meters[id];
+  if(f && Date.now() - f.t < 5*60000) return f.now;
+  if(m && m.last && Date.now() - m.last.t < 5*60000 && m.flowNow != null) return m.flowNow;
+  return null;
+}
+function sortVal(id, key){
+  const m = state.meters[id], r = m.readings, cur = r[r.length-1], prev = r.length>1 ? r[r.length-2] : null;
+  switch(key){
+    case 'id': return id;
+    case 'name': return (devNames[id]||'').toLowerCase() || null;
+    case 'flow': return flowVal(id);
+    case 'today': return devFlow[id] ? devFlow[id].today : null;
+    case 'cur': return cur ? cur.vol : null;
+    case 'prev': return prev ? prev.vol : null;
+    case 'chg': return prev ? cur.vol - prev.vol : null;
+    case 'seen': return m.last ? m.last.t : null;
+    case 'count': return m.count;
+    case 'rssi': return m.last ? m.last.rssi : null;
+    case 'brssi': return m.bestRssi;
+    case 'snr': return m.last ? m.last.snr : null;
+    case 'bsnr': return m.bestSnr;
+    case 'status': return m.last && m.last.leaking ? 2 : (m.last && (Date.now()-m.last.t) > 120000 ? 0 : 1);
+  }
+  return null;
+}
+function sortedIds(){
+  const s = state.sort || { key:'bsnr', dir:-1 };
+  return Object.keys(state.meters).sort((a,b) => {
+    const va = sortVal(a, s.key), vb = sortVal(b, s.key);
+    if(va == null && vb == null) return a < b ? -1 : 1;
+    if(va == null) return 1;                     // empty values always last
+    if(vb == null) return -1;
+    const c = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+    return c ? c * s.dir : (a < b ? -1 : 1);
+  });
+}
+function renderSortHeads(){
+  const s = state.sort || { key:'bsnr', dir:-1 };
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.sort === s.key);
+    th.classList.toggle('asc', th.dataset.sort === s.key && s.dir > 0);
+  });
+}
+document.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+  const key = th.dataset.sort, s = state.sort || { key:'bsnr', dir:-1 };
+  // text columns start A→Z, number columns start with the biggest
+  state.sort = s.key === key ? { key, dir: -s.dir } : { key, dir: (key==='id'||key==='name') ? 1 : -1 };
+  save(); renderTable();
+});
 function renderTable(flashId){
-  const ids = Object.keys(state.meters).sort((a,b)=>(state.meters[b].bestSnr||-99)-(state.meters[a].bestSnr||-99));
+  renderSortHeads();
+  const ids = sortedIds();
   const tb = $('meterRows');
   if(!ids.length){ tb.innerHTML = '<tr><td colspan="14" class="empty">No meters yet. Connect the receiver over USB (or start rtl_433).</td></tr>'; return; }
   tb.innerHTML = ids.map(id => {
@@ -426,7 +497,7 @@ function renderTable(flashId){
       <td class="num">${devFlow[id] && devFlow[id].today!=null ? Math.round(devFlow[id].today)+' L' : '<span class="muted">–</span>'}</td>
       <td class="num">${volStr(m, cur && cur.vol)}</td>
       <td class="num">${prev ? volStr(m, prev.vol)+'<div class="muted" style="font-size:11px">'+tstr(prev.t)+'</div>' : '<span class="muted">–</span>'}</td>
-      <td class="num">${diff==null?'–':(diff>=0?'+':'')+diff.toFixed(m.gear<0.1?2:1)}</td>
+      <td class="num">${diff==null?'–':(diff>=0?'+':'')+diff.toFixed(dec(m))}</td>
       <td>${m.last ? ago(m.last.t)+' ago' : '–'}</td>
       <td class="num">${m.count}</td>
       <td class="num">${fmt(m.last&&m.last.rssi)}</td>
@@ -453,7 +524,7 @@ function renderHistory(){
   const r = m.readings.slice().reverse().slice(0,100);
   tb.innerHTML = r.map((x,i) => {
     const older = r[i+1]; const d = older ? x.vol-older.vol : null;
-    return `<tr><td>${tstr(x.t)}</td><td class="num">${volStr(m,x.vol)}</td><td class="num">${d==null?'first seen':(d>=0?'+':'')+d.toFixed(m.gear<0.1?2:1)}</td></tr>`;
+    return `<tr><td>${tstr(x.t)}</td><td class="num">${volStr(m,x.vol)}</td><td class="num">${d==null?'first seen':(d>=0?'+':'')+d.toFixed(dec(m))}</td></tr>`;
   }).join('');
 }
 
@@ -461,7 +532,7 @@ function renderLog(){
   const tb = $('logRows');
   if(!log.length){ tb.innerHTML = '<tr><td colspan="6" class="empty">Waiting for packets…</td></tr>'; return; }
   tb.innerHTML = log.slice(0,25).map(p => `<tr><td>${hms(p.t)}</td><td><span style="color:${colorOf(p.id)}">●</span> ${p.id}</td>
-    <td class="num">${(+p.vol).toFixed(2)} ${p.unit||''}</td><td class="num">${fmt(p.rssi)}</td><td class="num">${fmt(p.snr)}</td><td class="num">${p.corr||''}</td></tr>`).join('');
+    <td class="num">${(+p.vol).toFixed(p.dec||2)} ${p.unit||''}</td><td class="num">${fmt(p.rssi)}</td><td class="num">${fmt(p.snr)}</td><td class="num">${p.corr||''}</td></tr>`).join('');
 }
 
 function drawChart(){
@@ -541,6 +612,7 @@ function devStatus(st){
   $('sMqttState').innerHTML = st.mqtt ? '<span class="ok">Connected – meters appear in Home Assistant automatically (MQTT integration)</span>' : (st.mqtt_uri ? '<span class="bad">Not connected to '+esc(st.mqtt_uri)+'</span>' : 'Off. Only needed for Home Assistant.');
   const fill = (id,v) => { const el=$(id); if(document.activeElement!==el && !el.dataset.dirty) el.value = v||''; };
   fill('sSsid', st.ssid); fill('sMqtt', st.mqtt_uri);
+  if(st.scale_all != null && document.activeElement !== $('sScaleAll')) $('sScaleAll').value = String(st.scale_all);
   $('sShow').parentElement.style.display = st.show===undefined ? 'none' : '';
   if(document.activeElement!==$('sShow') && st.show) $('sShow').value = st.show;
   if(st.tz && document.activeElement!==$('sTz')){ const o = Array.from($('sTz').options).find(o=>o.value===st.tz); if(o) $('sTz').value = st.tz; }
@@ -552,6 +624,7 @@ function handleSerialLine(line){
   let o; try{ o = JSON.parse(line); }catch(e){ devLog(line); return; }
   if(o.model){ handleEvent(o); if(!o.replay) devLog(`meter ${o.id}${devNames[o.id]?' ('+devNames[o.id]+')':''}  ${o.volume} ${o.unit}  rssi ${o.rssi}  snr ${o.snr}  fixes ${o.corrections}`+(o.flags1!=null?`  f1 ${o.flags1} f2 ${o.flags2} b9 ${o.b9}`:'')); }
   else if(o.type === 'status'){ devStatus(o); }
+  else if(o.type === 'scale'){ const m = state.meters[o.id]; if(m){ rescaleMeter(m, o.scale); m.scaleOwn = !!o.scale_own; save(); renderAll(); } if($('sMeter').value===o.id) $('sScale').value = scaleSel(o.id); }
   else if(o.type === 'meter'){
     const had = devNames[o.id]; if(o.name) devNames[o.id] = o.name; else delete devNames[o.id];
     if(o.flow_now!=null && (o.seen===undefined || o.seen)) devFlow[o.id] = { now:o.flow_now, avg:o.flow_lpm, today:o.today_l, t:Date.now() };
@@ -624,6 +697,7 @@ function renderMeterSelect(){
   const ids = Array.from(new Set(Object.keys(state.meters).concat(Object.keys(devNames)))).sort();
   sel.innerHTML = ids.length ? ids.map(id => `<option value="${id}">${id}${devNames[id]?' – '+esc(devNames[id]):''}</option>`).join('') : '<option value="">— no meters heard yet —</option>';
   if(cur && ids.includes(cur)) sel.value = cur;
+  if(document.activeElement !== $('sScale')) $('sScale').value = scaleSel(sel.value);
 }
 const sendSeq = (cmds) => cmds.reduce((p,c,i)=>p.then(()=>new Promise(r=>setTimeout(()=>{ serialSend(c); r(); }, i?300:0))), Promise.resolve());
 ['sSsid','sMqtt','sMuser'].forEach(id => $(id).oninput = () => $(id).dataset.dirty = '1');
@@ -648,7 +722,13 @@ $('sNameBtn').onclick = () => {
   sendSeq(['name '+id+' '+nm, 'meters']).then(()=>{ $('sName').value=''; });
 };
 $('sUnnameBtn').onclick = () => { const id = $('sMeter').value; if(id) sendSeq(['unname '+id, 'meters']); };
-$('sMeter').onchange = () => { $('sName').value = devNames[$('sMeter').value]||''; };
+function scaleSel(id){ const m = state.meters[id]; return m && m.scaleOwn ? String(m.scale) : 'default'; }
+$('sMeter').onchange = () => { const id = $('sMeter').value; $('sName').value = devNames[id]||''; $('sScale').value = scaleSel(id); };
+$('sScaleBtn').onclick = () => {
+  const id = $('sMeter').value; if(!id){ alert('Pick a meter first.'); return; }
+  serialSend('scale '+id+' '+$('sScale').value);
+};
+$('sScaleAllBtn').onclick = () => serialSend('scale all '+$('sScaleAll').value);
 $('sShow').onchange = () => sendSeq(['show '+$('sShow').value, 'meters']);
 $('sTz').onchange = () => { $('sTzCustom').style.display = $('sTz').value==='custom' ? '' : 'none'; };
 $('sTzBtn').onclick = () => { const v = $('sTz').value==='custom' ? $('sTzCustom').value.trim() : $('sTz').value; if(v) serialSend('tz '+v); };
