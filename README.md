@@ -127,8 +127,17 @@ Each named meter appears as a device **"Arad &lt;name&gt;"**:
 
 Example automations are in [`homeassistant/`](homeassistant):
 
-- `water_flow_alert.yaml`: notifies you when water flows for more than 10 minutes and lists today's use.
+- `water_flow_alert.yaml`: notifies your phone when water flows for more than 10 minutes and lists today's use.
+- `water_flow_alert_telegram.yaml`: the same alert as a Telegram message (needs the Telegram bot integration).
 - `flow_started_notify.yaml`: notifies you when water starts running, for example at night.
+
+The images below are examples made with made-up data:
+
+| A named meter in Home Assistant | Telegram alert |
+|---|---|
+| ![Home Assistant example](docs/images/example_home_assistant.png) | <img src="docs/images/example_telegram.png" width="300"> |
+
+The hourly chart is a *Statistics graph* card on the *Water today* sensor, set to "change" per hour and shown as bars.
 
 ## How the numbers work
 
