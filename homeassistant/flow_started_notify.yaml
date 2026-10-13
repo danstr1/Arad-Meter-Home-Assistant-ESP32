@@ -1,0 +1,22 @@
+# Example Home Assistant automation: tell me as soon as a named meter starts showing water flow
+# (uses the "Water flowing" sensor = the meter's register moved since its previous packet).
+# Useful to check "is water running right now?" without going out to the meter.
+# Paste into Settings > Automations > Create automation > (three dots) Edit in YAML, then pick your meter below.
+alias: "Water started flowing"
+mode: queued
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.arad_01234567_00_flowing   # <- your meter's "Water flowing" entity
+    from: "off"
+    to: "on"
+conditions:
+  - condition: time                                  # optional: only at night / when away
+    after: "23:00:00"
+    before: "06:00:00"
+actions:
+  - action: notify.notify                            # <- change to e.g. notify.mobile_app_your_phone
+    data:
+      title: "💧 Water is running"
+      message: >-
+        {{ state_attr(trigger.entity_id, 'friendly_name') | replace(' Water flowing', '') }}:
+        water started flowing at {{ now().strftime('%H:%M') }}.

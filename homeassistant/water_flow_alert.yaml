@@ -1,0 +1,51 @@
+# Example Home Assistant automation: alert when any Arad meter shows water flow for more than 10 minutes.
+# Paste into Settings > Automations > Create automation > (three dots) Edit in YAML.
+# Change the notify action at the bottom to your own phone / Telegram / speaker.
+# Meters are found automatically (the "Water flow" sensor of every meter you named on the receiver),
+# so no entity IDs need editing. To ignore a named meter, add its name to the filter, e.g. 'flow now|Garden'.
+alias: "Water flowing for more than 10 minutes"
+description: Uses the 5-minute average "Water flow" sensors of the Arad water meter receiver.
+mode: single
+max_exceeded: silent
+triggers:
+  - trigger: template
+    value_template: >-
+      {{ integration_entities('mqtt') | select('match', 'sensor\.')
+         | select('is_state_attr', 'unit_of_measurement', 'L/min')
+         | expand | rejectattr('name', 'search', 'flow now')
+         | map(attribute='state') | map('float', 0) | select('gt', 0) | list | count > 0 }}
+    for:
+      minutes: 10
+actions:
+  - variables:
+      flow_ents: >-
+        {{ integration_entities('mqtt') | select('match', 'sensor\.')
+           | select('is_state_attr', 'unit_of_measurement', 'L/min')
+           | expand | rejectattr('name', 'search', 'flow now')
+           | map(attribute='entity_id') | list }}
+      lines: >-
+        {%- set ns = namespace(l=[], total=0) -%}
+        {%- for e in flow_ents -%}
+          {%- set name = state_attr(e, 'friendly_name') | replace('Arad ', '', 1) | replace(' Water flow', '') -%}
+          {%- set today = device_entities(device_id(e)) | select('match', 'sensor\.')
+                          | select('is_state_attr', 'unit_of_measurement', 'L') | first | default('') -%}
+          {%- set t = states(today) | float(0) if today else 0 -%}
+          {%- set ns.total = ns.total + t -%}
+          {%- set f = states(e) | float(0) -%}
+          {%- set ns.l = ns.l + [('🔵 ' if f > 0 else '⚪ ') ~ name ~ ': ' ~ (f | round(1)) ~ ' L/min, today ' ~ (t | round(0) | int) ~ ' L'] -%}
+        {%- endfor -%}
+        {{ (ns.l + ['Total today: ' ~ (ns.total | round(0) | int) ~ ' L']) | join('\n') }}
+  - action: notify.notify          # <- change to e.g. notify.mobile_app_your_phone
+    data:
+      title: "💧 Water is flowing"
+      message: |-
+        Continuous water flow for more than 10 minutes ({{ now().strftime('%H:%M') }}).
+        {{ lines }}
+        Check for an open tap, irrigation or a leak.
+  # Optional: say it on a speaker
+  # - action: tts.speak
+  #   target:
+  #     entity_id: tts.google_translate_en_com
+  #   data:
+  #     media_player_entity_id: media_player.living_room
+  #     message: "Water has been flowing for more than ten minutes."

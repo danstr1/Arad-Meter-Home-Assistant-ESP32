@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arad Meter Monitor</title>
+<!-- Arad Meter Monitor 3.0 – receiver over Wi-Fi (WebSocket /ws; the board serves this page at http://arad.local/), USB (Web Serial) or rtl_433. GPL-2.0-or-later -->
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1b1f24; --muted:#667085; --line:#e3e6ea;
+  --accent:#1f6feb; --good:#1a7f37; --warn:#b26a00; --bad:#cf222e; --track:#eef1f4;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --bg:#0f1216; --panel:#171b21; --ink:#e6e9ed; --muted:#8b949e; --line:#2a3038;
+         --accent:#4c9aff; --good:#3fb950; --warn:#d29922; --bad:#f85149; --track:#222831; color-scheme:dark; }
+}
+:root[data-theme="dark"]{ --bg:#0f1216; --panel:#171b21; --ink:#e6e9ed; --muted:#8b949e; --line:#2a3038;
+       --accent:#4c9aff; --good:#3fb950; --warn:#d29922; --bad:#f85149; --track:#222831; color-scheme:dark; }
+:root[data-theme="light"]{ color-scheme:light; }
+#themeBtn{min-width:44px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:18px;margin:0;font-weight:650}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.status{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.dot.on{background:var(--good)}
+main{max-width:1680px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+main > *, .grid2 > *{min-width:0}
+@media (max-width:600px){ main{padding:10px;gap:10px} .panel{padding:12px} header{padding:10px 12px} .tile .v{font-size:24px} }
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+select,input,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:14px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile .k{color:var(--muted);font-size:12px}
+.tile .v{font-size:30px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.2}
+.tile .s{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.tile.best .v{color:var(--good)}
+.bar{height:14px;background:var(--track);border-radius:7px;overflow:hidden;margin-top:12px;position:relative}
+.bar > div{height:100%;background:linear-gradient(90deg,var(--bad),var(--warn),var(--good));width:0;transition:width .4s}
+.bar .mark{position:absolute;top:-3px;width:2px;height:20px;background:var(--ink)}
+.barlbl{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:4px}
+canvas{width:100%;height:220px;display:block;margin-top:14px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;color:var(--muted);font-size:12px;margin-top:6px}
+.legend span i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:12px}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--track)}
+tbody tr.sel{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.num{text-align:right}
+.muted{color:var(--muted)}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid var(--line)}
+.pill.leak{color:var(--bad);border-color:var(--bad)}
+.flash{animation:flash 1.2s ease-out}
+.flowing{color:var(--accent);font-weight:650;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.55}}
+@keyframes flash{from{background:color-mix(in srgb,var(--good) 30%,transparent)}to{background:transparent}}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:800px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.hint{color:var(--muted);font-size:12px;margin-top:8px}
+.empty{color:var(--muted);padding:20px;text-align:center}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:6px}
+.form fieldset{border:1px solid var(--line);border-radius:8px;padding:12px;margin:0;display:grid;gap:8px}
+.form legend{font-weight:600;padding:0 6px}
+.form label{display:grid;gap:3px;font-size:12px;color:var(--muted)}
+.form input,.form select{width:100%}
+.ok{color:var(--good)} .bad{color:var(--bad)}
+.steps{margin:6px 0 0;padding-left:20px}
+.steps li{margin:3px 0}
+details summary{cursor:pointer;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Arad Meter Monitor</h1>
+  <div class="row">
+    <button id="themeBtn" title="Theme: automatic / light / dark">🌓</button>
+    <div class="status"><div class="dot" id="dot"></div><span id="statusTxt">Not connected</span></div>
+    <input id="espHost" size="14" value="arad.local" title="Receiver address on your network (arad.local or its IP)">
+    <button id="wifiBtn" class="primary" title="Connect to the receiver over Wi-Fi">Connect (Wi-Fi)</button>
+    <button id="serialBtn" title="Connect the Heltec receiver plugged into this computer (Chrome or Edge)">USB</button>
+    <details><summary>rtl_433 (SDR)</summary>
+      <input id="wsUrl" size="24" value="ws://127.0.0.1:8433/ws" title="rtl_433 websocket address">
+      <button id="reconnectBtn">Connect</button>
+    </details>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="startPanel">
+    <h2>Getting started</h2>
+    <ol class="steps">
+      <li><b>Over Wi-Fi:</b> open <b>http://arad.local/</b> (or the IP shown on the board's <i>Receiver</i> screen page), or type that address above and click <b>Connect (Wi-Fi)</b>.</li>
+      <li><b>Over USB</b> (first setup, or when Wi-Fi is not set): plug the board in, click <b>USB</b> and pick the board's port. Chrome or Edge only.</li>
+      <li>Open <b>Settings</b> (appears after connecting) and enter your Wi-Fi and, if you use Home Assistant, your MQTT broker. Settings are saved on the board.</li>
+      <li>Wait for meters to appear (each meter transmits about every 30 s). Give your own meter a name so it gets its own screen page.</li>
+    </ol>
+    <div class="hint">Meter IDs are printed on the meter's radio module. Nothing is sent anywhere except to your own MQTT broker. This page stores history only in this browser.</div>
+  </section>
+
+
+  <!-- Meters table -->
+  <section class="panel">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Meters heard</h2>
+      <div class="row">
+        <button id="exportBtn">Export CSV</button>
+        <button id="clearBtn">Clear all data</button>
+      </div>
+    </div>
+    <div class="tablewrap" style="margin-top:10px">
+      <table>
+        <thead><tr>
+          <th>Meter ID</th><th>Name</th><th class="num">Flow now<div class="muted" style="font-size:10px;font-weight:400">L/min</div></th><th class="num">Today</th><th class="num">Current reading</th><th class="num">Previous reading</th><th class="num">Change</th>
+          <th>Last seen</th><th class="num">Packets</th><th class="num">Last RSSI</th><th class="num">Best RSSI</th>
+          <th class="num">Last SNR</th><th class="num">Best SNR</th><th>Status</th>
+        </tr></thead>
+        <tbody id="meterRows"><tr><td colspan="14" class="empty">No meters yet. Connect the receiver over USB (or start rtl_433).</td></tr></tbody>
+      </table>
+    </div>
+    <div class="hint">Click a row to track that meter above and see its reading history. Data is kept in this browser between sessions.</div>
+  </section>
+
+  <!-- Antenna tuning -->
+  <section class="panel">
+    <h2>Antenna tuning</h2>
+    <div class="row">
+      <label>Meter:&nbsp;<select id="trackSel"><option value="">— waiting for meters —</option></select></label>
+      <button id="beepBtn">🔈 Beep on packet: off</button>
+      <button id="resetBestBtn" title="Clear best values to start a new antenna position test">Reset best</button>
+      <label>Chart:&nbsp;<select id="metricSel"><option value="rssi">RSSI</option><option value="snr">SNR</option></select></label>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Last RSSI</div><div class="v" id="tLastRssi">–</div><div class="s">dB</div></div>
+      <div class="tile best"><div class="k">Best RSSI</div><div class="v" id="tBestRssi">–</div><div class="s" id="tBestRssiAt">&nbsp;</div></div>
+      <div class="tile"><div class="k">Last SNR</div><div class="v" id="tLastSnr">–</div><div class="s">dB</div></div>
+      <div class="tile best"><div class="k">Best SNR</div><div class="v" id="tBestSnr">–</div><div class="s" id="tBestSnrAt">&nbsp;</div></div>
+      <div class="tile"><div class="k">Last packet</div><div class="v" id="tAgo">–</div><div class="s" id="tNext">next expected ~30 s</div></div>
+      <div class="tile"><div class="k">Packets</div><div class="v" id="tCount">0</div><div class="s" id="tCorr">&nbsp;</div></div>
+    </div>
+    <div class="bar"><div id="barFill"></div><div class="mark" id="barMark" style="display:none"></div></div>
+    <div class="barlbl"><span id="barLo">weak</span><span id="barMid">last packet vs. best (black line)</span><span id="barHi">strong</span></div>
+    <canvas id="chart"></canvas>
+    <div class="legend" id="legend"></div>
+    <div class="hint">Move the antenna, wait for 1–2 packets (each meter sends about every 30 s), and compare with the best value. Click <b>Reset best</b> before testing a new spot. SNR is the more reliable number; RSSI can sit at a fixed ceiling when the signal is strong.</div>
+  </section>
+
+
+  <section class="panel" id="devPanel" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Receiver status and log</h2>
+      <div class="row">
+        <input id="cmdIn" size="22" placeholder="command, e.g. meters">
+        <button id="cmdBtn">Send</button>
+      </div>
+    </div>
+    <div class="tiles" id="devTiles"></div>
+    <div class="hint">Commands: <b>meters</b>, <b>status</b>, <b>wifi &lt;ssid&gt;</b>, <b>wifipass &lt;pw&gt;</b>, <b>mqtt &lt;host&gt;</b>, <b>mqttuser</b>, <b>mqttpass</b>, <b>name &lt;id&gt; &lt;label&gt;</b>, <b>unname &lt;id&gt;</b>, <b>show all|named</b>, <b>tz &lt;POSIX TZ&gt;</b>, <b>freq &lt;MHz&gt;</b> (default 916.29), <b>bw &lt;kHz&gt;</b>, <b>pol 0|1|auto</b>, <b>raw on|off</b> (show packets that failed the checks), <b>reboot</b>, <b>factory</b>.</div>
+    <div class="tablewrap" style="margin-top:10px;max-height:260px;overflow-y:auto">
+      <pre id="devLog" style="margin:0;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all"></pre>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2 id="histTitle">Reading history</h2>
+      <div class="tablewrap">
+        <table><thead><tr><th>Time</th><th class="num">Reading</th><th class="num">Change</th></tr></thead>
+        <tbody id="histRows"><tr><td colspan="3" class="empty">Select a meter.</td></tr></tbody></table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Live packet log</h2>
+      <div class="tablewrap">
+        <table><thead><tr><th>Time</th><th>Meter</th><th class="num">Reading</th><th class="num">RSSI</th><th class="num">SNR</th><th class="num">Fix</th></tr></thead>
+        <tbody id="logRows"><tr><td colspan="6" class="empty">Waiting for packets…</td></tr></tbody></table>
+      </div>
+    </div>
+  </section>
+  <!-- Settings (USB) -->
+  <section class="panel" id="setPanel" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Settings (saved on the receiver)</h2>
+      <div class="row"><span class="muted" id="setInfo"></span></div>
+    </div>
+    <div class="form">
+      <fieldset><legend>Wi-Fi</legend>
+        <label>Network name (SSID)<input id="sSsid" autocomplete="off" placeholder="MyWiFi"></label>
+        <label>Password<input id="sWpass" type="password" autocomplete="new-password" placeholder="leave empty to keep the saved one"></label>
+        <div class="row"><button id="sWifiBtn" class="primary">Save Wi-Fi</button><button id="sWifiOff">Forget Wi-Fi</button></div>
+        <div class="hint" id="sWifiState">&nbsp;</div>
+      </fieldset>
+      <fieldset><legend>MQTT / Home Assistant (optional)</legend>
+        <label>Broker address<input id="sMqtt" autocomplete="off" placeholder="192.168.1.10 or mqtt://homeassistant.local:1883"></label>
+        <label>User<input id="sMuser" autocomplete="off" placeholder="optional"></label>
+        <label>Password<input id="sMpass" type="password" autocomplete="new-password" placeholder="leave empty to keep the saved one"></label>
+        <div class="row"><button id="sMqttBtn" class="primary">Save MQTT</button><button id="sMqttOff">Turn MQTT off</button></div>
+        <div class="hint" id="sMqttState">&nbsp;</div>
+      </fieldset>
+      <fieldset><legend>Meters</legend>
+        <label>Meter<select id="sMeter"><option value="">— no meters heard yet —</option></select></label>
+        <label>Name (up to 15 characters)<input id="sName" maxlength="15" placeholder="e.g. Home"></label>
+        <div class="row"><button id="sNameBtn" class="primary">Save name</button><button id="sUnnameBtn">Remove name</button></div>
+        <label>Show on the screen<select id="sShow"><option value="all">Every meter heard (default)</option><option value="named">Only meters I named</option></select></label>
+        <div class="hint">Every meter you name is added to Home Assistant automatically (needs MQTT). Remove the name to remove it.</div>
+      </fieldset>
+      <fieldset><legend>Clock and device</legend>
+        <label>Time zone (for "today" totals)<select id="sTz">
+          <option value="IST-2IDT,M3.4.4/26,M10.5.0">Israel</option>
+          <option value="UTC0">UTC</option>
+          <option value="GMT0BST,M3.5.0/1,M10.5.0">UK</option>
+          <option value="CET-1CEST,M3.5.0,M10.5.0/3">Central Europe</option>
+          <option value="EST5EDT,M3.2.0,M11.1.0">US Eastern</option>
+          <option value="PST8PDT,M3.2.0,M11.1.0">US Pacific</option>
+          <option value="custom">Other (POSIX TZ string)…</option>
+        </select></label>
+        <input id="sTzCustom" style="display:none" placeholder="e.g. AEST-10AEDT,M10.1.0,M4.1.0/3">
+        <div class="row"><button id="sTzBtn">Save time zone</button><button id="sReboot">Reboot</button><button id="sFactory" title="Erase Wi-Fi, MQTT, names and saved totals">Factory reset</button></div>
+      </fieldset>
+    </div>
+  </section>
+</main>
+
+<script>
+(function(){
+'use strict';
+const STORE_KEY = 'aradMonitor.v2';
+const MODEL = 'AradMsMeter-Dialog3G';
+const COLORS = ['#1f6feb','#e36209','#1a7f37','#8250df','#cf222e','#0598bc','#bf8700','#d63384'];
+
+let state = { meters:{}, tracked:'', metric:'rssi' };
+let devNames = {};       // meter id -> name, from the receiver
+let devFlow = {};        // meter id -> {now, avg, today, t}, from the receiver (named meters)
+let log = [];             // recent packets (session only)
+const seen = new Set();   // dedupe keys (history replay on reconnect)
+let ws = null, wsTimer = null, beepOn = false, audioCtx = null;
+
+// ---------- persistence ----------
+function load(){
+  try{ const s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); if(s && s.meters) state = Object.assign(state, s); }catch(e){}
+}
+let saveTimer = null;
+function save(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{ try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){} }, 300);
+}
+
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (v,d=1) => (v==null||isNaN(v)) ? '–' : Number(v).toFixed(d);
+function parseTime(t){
+  if(typeof t === 'string' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/.test(t)){
+    const d = new Date(t.replace(' ','T')).getTime(), now = Date.now();
+    // trust rtl_433's timestamp only if it is plausible (clock/timezone mismatch -> use arrival time)
+    if(!isNaN(d) && d <= now + 60000 && d >= now - 6*3600000) return d;
+  }
+  return Date.now();
+}
+function ago(ms){
+  const s = Math.max(0, Math.round((Date.now()-ms)/1000));
+  if(s < 60) return s+' s';
+  if(s < 3600) return Math.floor(s/60)+' min '+(s%60)+' s';
+  if(s < 86400) return Math.floor(s/3600)+' h '+Math.floor((s%3600)/60)+' min';
+  return Math.floor(s/86400)+' d';
+}
+function tstr(ms){ const d=new Date(ms); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }
+function hms(ms){ return new Date(ms).toLocaleTimeString(); }
+function volStr(m, v){ return v==null ? '–' : (+v).toFixed(m.gear && m.gear<0.1 ? 2 : 1)+' '+(m.unit||''); }
+function colorOf(id){ const ids = Object.keys(state.meters).sort(); return COLORS[Math.max(0,ids.indexOf(id)) % COLORS.length]; }
+
+// ---------- event handling ----------
+function handleEvent(ev){
+  if(!ev || ev.model !== MODEL || !ev.id) return;
+  // replayed history from the board carries its age; live packets are "now"
+  const t = (ev.replay && typeof ev.age_s === 'number') ? Date.now() - ev.age_s*1000
+          : (typeof ev.ts === 'number' && ev.ts > 1600000000) ? Math.min(ev.ts*1000, Date.now()) : parseTime(ev.time);
+  const key = ev.id+'|'+(ev.seq!=null?'s'+ev.seq:ev.time)+'|'+ev.volume+'|'+ev.snr;
+  if(seen.has(key)) return;
+  seen.add(key);
+  if(seen.size > 5000) seen.clear();
+
+  let m = state.meters[ev.id];
+  if(m && m.last && t <= m.last.t) return;      // already have newer data (history replay)
+  if(!m){
+    m = state.meters[ev.id] = { id:ev.id, unit:ev.unit, gear:ev.gear, first:t, count:0,
+      readings:[], sig:[], bestRssi:null, bestRssiAt:null, bestSnr:null, bestSnrAt:null, last:null };
+  }
+  m.unit = ev.unit; m.gear = ev.gear; m.count++;
+  // flow now = change since this meter's previous packet (if that packet is at most 5 min older)
+  if(m.last && m.last.vol!=null){
+    const dt = (t - m.last.t)/60000;
+    if(dt >= 5/60) m.flowNow = dt <= 5 ? Math.max(0, (ev.volume - m.last.vol) * (ev.unit==='m3' ? 1000 : 1)) / dt : null;
+  }
+  const rssi = (typeof ev.rssi === 'number') ? ev.rssi : null;
+  const snr  = (typeof ev.snr  === 'number') ? ev.snr  : null;
+  m.last = { t, vol:ev.volume, rssi, snr, noise:ev.noise, corr:ev.corrections||0, leaking:ev.leaking||0 };
+
+  if(rssi!=null && (m.bestRssi==null || rssi > m.bestRssi)){ m.bestRssi = rssi; m.bestRssiAt = t; }
+  if(snr!=null  && (m.bestSnr==null  || snr  > m.bestSnr )){ m.bestSnr  = snr;  m.bestSnrAt  = t; }
+
+  m.sig.push({ t, rssi, snr });
+  if(m.sig.length > 400) m.sig.splice(0, m.sig.length-400);
+
+  const lastR = m.readings[m.readings.length-1];
+  if(!lastR || Math.abs(lastR.vol - ev.volume) > 1e-9){
+    m.readings.push({ t, vol:ev.volume });
+    if(m.readings.length > 1000) m.readings.splice(0, m.readings.length-1000);
+  } else {
+    lastR.lastSeen = t;
+  }
+
+  log.unshift({ t, id:ev.id, vol:ev.volume, unit:ev.unit, rssi, snr, corr:ev.corrections||0 });
+  if(log.length > 60) log.length = 60;
+
+  if(!state.tracked) state.tracked = ev.id;
+  if(beepOn && (state.tracked === ev.id)) beep(snr);
+  save();
+  renderAll(ev.id);
+}
+
+// ---------- websocket ----------
+function setStatus(on, txt){ $('dot').classList.toggle('on', on); $('statusTxt').textContent = txt; }
+function connect(){
+  clearTimeout(wsTimer);
+  if(ws){ try{ ws.onclose=null; ws.close(); }catch(e){} }
+  const url = $('wsUrl').value.trim();
+  setStatus(false, 'Connecting…');
+  try{ ws = new WebSocket(url); }catch(e){ setStatus(false,'Bad address'); return; }
+  ws.onopen = () => setStatus(true, 'Connected to rtl_433');
+  ws.onmessage = msg => {
+    String(msg.data).split(/\r?\n/).forEach(line => {
+      line = line.trim(); if(!line || line[0] !== '{') return;
+      try{ handleEvent(JSON.parse(line)); }catch(e){}
+    });
+  };
+  ws.onclose = () => { setStatus(false, 'rtl_433 not reachable – retrying…'); wsTimer = setTimeout(connect, 3000); };
+  ws.onerror = () => {};
+}
+
+// ---------- audio ----------
+function beep(snr){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    const f = 250 + Math.max(0, Math.min(45, snr||0)) * 30;   // higher pitch = better signal
+    o.frequency.value = f; o.type = 'sine';
+    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.3, audioCtx.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+0.35);
+    o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+0.4);
+  }catch(e){}
+}
+
+// ---------- rendering ----------
+function renderAll(flashId){ renderSelect(); renderTiles(); renderTable(flashId); renderHistory(); renderLog(); drawChart(); if(typeof renderMeterSelect==='function') renderMeterSelect(); }
+
+function renderSelect(){
+  const sel = $('trackSel'); const ids = Object.keys(state.meters).sort();
+  const cur = state.tracked;
+  const want = ids.map(id => id+(devNames[id]||'')).join(',');
+  if(sel.dataset.ids !== want){
+    sel.innerHTML = ids.length ? ids.map(id => `<option value="${id}">${id}${devNames[id]?' – '+esc(devNames[id]):''}</option>`).join('') : '<option value="">— waiting for meters —</option>';
+    sel.dataset.ids = want;
+  }
+  if(cur) sel.value = cur;
+}
+
+function renderTiles(){
+  const m = state.meters[state.tracked];
+  const set = (id,v) => $(id).textContent = v;
+  if(!m || !m.last){
+    ['tLastRssi','tBestRssi','tLastSnr','tBestSnr','tAgo'].forEach(i=>set(i,'–')); set('tCount','0');
+    $('barFill').style.width='0'; $('barMark').style.display='none'; return;
+  }
+  set('tLastRssi', fmt(m.last.rssi)); set('tBestRssi', fmt(m.bestRssi));
+  set('tLastSnr', fmt(m.last.snr));   set('tBestSnr', fmt(m.bestSnr));
+  set('tBestRssiAt', m.bestRssiAt ? 'dB at '+hms(m.bestRssiAt) : ' ');
+  set('tBestSnrAt',  m.bestSnrAt  ? 'dB at '+hms(m.bestSnrAt)  : ' ');
+  set('tCount', m.count);
+  set('tCorr', m.last.corr ? m.last.corr+' bit(s) corrected on last' : 'last packet clean');
+  updateAgo();
+  // bar: map metric value 0..45 dB SNR or -60..0 dB RSSI
+  const metric = state.metric;
+  const val = metric==='snr' ? m.last.snr : m.last.rssi;
+  const dbm = metric==='rssi' && val!=null && val < -55;   // the receiver reports dBm, an SDR reports dBFS
+  const lo = metric==='snr' ? 0 : (dbm ? -110 : -60), hi = metric==='snr' ? 45 : (dbm ? -30 : 0);
+  const best = metric==='snr' ? m.bestSnr : m.bestRssi;
+  const pct = v => Math.max(0, Math.min(100, (v-lo)/(hi-lo)*100));
+  $('barFill').style.width = (val==null?0:pct(val))+'%';
+  if(best!=null){ $('barMark').style.display='block'; $('barMark').style.left = pct(best)+'%'; }
+  $('barLo').textContent = (metric==='snr'?'SNR ':'RSSI ')+lo+' dB';
+  $('barHi').textContent = hi+' dB';
+}
+
+function updateAgo(){
+  const m = state.meters[state.tracked];
+  if(!m || !m.last){ $('tAgo').textContent='–'; return; }
+  $('tAgo').textContent = ago(m.last.t);
+  const s = (Date.now()-m.last.t)/1000;
+  $('tNext').textContent = s > 75 ? 'no packet for a while – signal lost?' : 'next expected ~30 s';
+  $('tNext').style.color = s > 75 ? 'var(--bad)' : '';
+}
+
+function renderTable(flashId){
+  const ids = Object.keys(state.meters).sort((a,b)=>(state.meters[b].bestSnr||-99)-(state.meters[a].bestSnr||-99));
+  const tb = $('meterRows');
+  if(!ids.length){ tb.innerHTML = '<tr><td colspan="14" class="empty">No meters yet. Connect the receiver over USB (or start rtl_433).</td></tr>'; return; }
+  tb.innerHTML = ids.map(id => {
+    const m = state.meters[id]; const r = m.readings;
+    const cur = r[r.length-1], prev = r.length>1 ? r[r.length-2] : null;
+    const diff = prev ? (cur.vol - prev.vol) : null;
+    const stale = m.last && (Date.now()-m.last.t) > 120000;
+    return `<tr data-id="${id}" class="${id===state.tracked?'sel':''} ${id===flashId?'flash':''}">
+      <td><span style="color:${colorOf(id)}">●</span> <b>${id}</b></td>
+      <td>${devNames[id]?esc(devNames[id]):'<span class="muted">–</span>'}</td>
+      <td class="num">${flowCell(id)}</td>
+      <td class="num">${devFlow[id] && devFlow[id].today!=null ? Math.round(devFlow[id].today)+' L' : '<span class="muted">–</span>'}</td>
+      <td class="num">${volStr(m, cur && cur.vol)}</td>
+      <td class="num">${prev ? volStr(m, prev.vol)+'<div class="muted" style="font-size:11px">'+tstr(prev.t)+'</div>' : '<span class="muted">–</span>'}</td>
+      <td class="num">${diff==null?'–':(diff>=0?'+':'')+diff.toFixed(m.gear<0.1?2:1)}</td>
+      <td>${m.last ? ago(m.last.t)+' ago' : '–'}</td>
+      <td class="num">${m.count}</td>
+      <td class="num">${fmt(m.last&&m.last.rssi)}</td>
+      <td class="num"><b>${fmt(m.bestRssi)}</b></td>
+      <td class="num">${fmt(m.last&&m.last.snr)}</td>
+      <td class="num"><b>${fmt(m.bestSnr)}</b></td>
+      <td>${m.last&&m.last.leaking?'<span class="pill leak">LEAK</span>':(stale?'<span class="pill">not heard</span>':'<span class="pill">ok</span>')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function flowCell(id){
+  const f = devFlow[id], m = state.meters[id];
+  let now = null, tip = 'change since the previous packet';
+  if(f && Date.now() - f.t < 5*60000){ now = f.now; tip += ', 5-min average '+fmt(f.avg)+' L/min'; }
+  else if(m && m.last && Date.now() - m.last.t < 5*60000 && m.flowNow != null) now = m.flowNow;
+  if(now == null) return '<span class="muted">–</span>';
+  return now > 0 ? `<span class="flowing" title="${tip}">💧 ${fmt(now)}</span>` : `<span class="muted" title="${tip}">0</span>`;
+}
+function renderHistory(){
+  const m = state.meters[state.tracked]; const tb = $('histRows');
+  $('histTitle').textContent = m ? 'Reading history – '+m.id : 'Reading history';
+  if(!m){ tb.innerHTML = '<tr><td colspan="3" class="empty">Select a meter.</td></tr>'; return; }
+  const r = m.readings.slice().reverse().slice(0,100);
+  tb.innerHTML = r.map((x,i) => {
+    const older = r[i+1]; const d = older ? x.vol-older.vol : null;
+    return `<tr><td>${tstr(x.t)}</td><td class="num">${volStr(m,x.vol)}</td><td class="num">${d==null?'first seen':(d>=0?'+':'')+d.toFixed(m.gear<0.1?2:1)}</td></tr>`;
+  }).join('');
+}
+
+function renderLog(){
+  const tb = $('logRows');
+  if(!log.length){ tb.innerHTML = '<tr><td colspan="6" class="empty">Waiting for packets…</td></tr>'; return; }
+  tb.innerHTML = log.slice(0,25).map(p => `<tr><td>${hms(p.t)}</td><td><span style="color:${colorOf(p.id)}">●</span> ${p.id}</td>
+    <td class="num">${(+p.vol).toFixed(2)} ${p.unit||''}</td><td class="num">${fmt(p.rssi)}</td><td class="num">${fmt(p.snr)}</td><td class="num">${p.corr||''}</td></tr>`).join('');
+}
+
+function drawChart(){
+  const c = $('chart'), dpr = window.devicePixelRatio||1;
+  const W = c.clientWidth, H = c.clientHeight; c.width = W*dpr; c.height = H*dpr;
+  const g = c.getContext('2d'); g.scale(dpr,dpr); g.clearRect(0,0,W,H);
+  const cs = getComputedStyle(document.documentElement);
+  const ink = cs.getPropertyValue('--muted').trim(), line = cs.getPropertyValue('--line').trim();
+  const metric = state.metric;
+  const now = Date.now(), span = 15*60*1000, t0 = now - span;
+  const ids = Object.keys(state.meters).sort();
+  let vals = [];
+  ids.forEach(id => state.meters[id].sig.forEach(s => { if(s.t>=t0 && s[metric]!=null) vals.push(s[metric]); }));
+  let lo = vals.length ? Math.floor(Math.min(...vals)/5)*5-5 : (metric==='snr'?0:-60);
+  let hi = vals.length ? Math.ceil(Math.max(...vals)/5)*5+5 : (metric==='snr'?45:0);
+  const L=44,R=10,T=10,B=24, x = t => L+(t-t0)/span*(W-L-R), y = v => T+(hi-v)/(hi-lo)*(H-T-B);
+  g.font = '11px system-ui'; g.fillStyle = ink; g.strokeStyle = line; g.lineWidth = 1;
+  for(let v=lo; v<=hi; v+=5){ g.beginPath(); g.moveTo(L,y(v)); g.lineTo(W-R,y(v)); g.stroke(); g.fillText(v+'', 8, y(v)+4); }
+  for(let k=0;k<=15;k+=5){ const tt = now - k*60000; g.fillText(k? '-'+k+' min':'now', x(tt)-(k?18:22), H-6); }
+  ids.forEach(id => {
+    const m = state.meters[id], pts = m.sig.filter(s=>s.t>=t0 && s[metric]!=null);
+    const col = colorOf(id), isT = id===state.tracked;
+    g.globalAlpha = isT ? 1 : 0.35; g.strokeStyle = col; g.fillStyle = col; g.lineWidth = isT?2:1;
+    g.beginPath(); pts.forEach((s,i)=>{ const X=x(s.t),Y=y(s[metric]); i?g.lineTo(X,Y):g.moveTo(X,Y); }); g.stroke();
+    pts.forEach(s=>{ g.beginPath(); g.arc(x(s.t),y(s[metric]), isT?3.5:2.5, 0, 7); g.fill(); });
+    const best = metric==='snr'?m.bestSnr:m.bestRssi;
+    if(isT && best!=null && best>=lo && best<=hi){ g.setLineDash([4,4]); g.beginPath(); g.moveTo(L,y(best)); g.lineTo(W-R,y(best)); g.stroke(); g.setLineDash([]); }
+  });
+  g.globalAlpha = 1;
+  $('legend').innerHTML = ids.map(id=>`<span><i style="background:${colorOf(id)}"></i>${id}${id===state.tracked?' (tracked, dashed = best)':''}</span>`).join('') +
+    `<span>${metric.toUpperCase()} in dB, last 15 min</span>`;
+}
+
+// ---------- controls ----------
+$('trackSel').onchange = e => { state.tracked = e.target.value; save(); renderAll(); };
+$('metricSel').onchange = e => { state.metric = e.target.value; save(); renderAll(); };
+$('meterRows').onclick = e => { const tr = e.target.closest('tr[data-id]'); if(tr){ state.tracked = tr.dataset.id; save(); renderAll(); } };
+$('beepBtn').onclick = () => { beepOn = !beepOn; $('beepBtn').textContent = (beepOn?'🔊':'🔈')+' Beep on packet: '+(beepOn?'on':'off'); if(beepOn) beep(25); };
+$('resetBestBtn').onclick = () => {
+  Object.values(state.meters).forEach(m => { m.bestRssi = m.bestSnr = m.bestRssiAt = m.bestSnrAt = null; m.sig = []; });
+  save(); renderAll();
+};
+$('clearBtn').onclick = () => {
+  if(!confirm('Delete all saved meters and reading history?')) return;
+  state.meters = {}; state.tracked = ''; log = []; seen.clear(); save(); renderAll();
+};
+$('exportBtn').onclick = () => {
+  const rows = [['meter_id','time','reading','unit']];
+  Object.values(state.meters).forEach(m => m.readings.forEach(r => rows.push([m.id, new Date(r.t).toISOString(), r.vol, m.unit||''])));
+  const blob = new Blob([rows.map(r=>r.join(',')).join('\r\n')], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'arad_readings.csv'; a.click();
+};
+
+// ---------- ESP32 over USB (Web Serial) ----------
+let serPort = null, serWriter = null, devLines = [];
+function devLog(txt){
+  devLines.push(new Date().toLocaleTimeString()+'  '+txt);
+  if(devLines.length > 200) devLines.splice(0, devLines.length-200);
+  const el = $('devLog'); el.textContent = devLines.slice().reverse().join('\n');
+}
+let lastStatus = null;
+function devStatus(st){
+  lastStatus = st;
+  const t = (k,v,sub)=>`<div class="tile"><div class="k">${k}</div><div class="v" style="font-size:22px">${v}</div><div class="s">${sub||'&nbsp;'}</div></div>`;
+  $('devTiles').innerHTML =
+    t('Receiver', esc(st.radio||'?'), esc(st.board||'')+', fw '+esc(st.fw||'')) +
+    t('Decoded', st.decoded, 'valid meter packets') +
+    t('Meters on screen', st.tracked, st.show===undefined ? 'named meters' : (st.show==='named'?'only named':'every meter heard')+(st.named?', '+st.named+' named':'')) +
+    t('Noise floor', fmt(st.noise)+' dBm', 'radio RSSI with no packet') +
+    t('Not decoded', st.failed, 'caught but failed the checks') +
+    t('Frequency', (+st.freq_mhz).toFixed(3)+' MHz', 'bandwidth '+st.bw_khz+' kHz, polarity '+st.pol+' ('+st.pol_mode+')') +
+    t('Wi-Fi', st.wifi?'<span class="ok">connected</span>':(st.ssid?'<span class="bad">not connected</span>':'not set up'), st.wifi?esc(st.ssid)+' – '+st.ip:(st.ssid?esc(st.ssid):'enter it in Settings')) +
+    t('MQTT', st.mqtt?'<span class="ok">connected</span>':(st.mqtt_uri?'<span class="bad">not connected</span>':'off'), st.mqtt_uri?esc(st.mqtt_uri):'optional') +
+    (st.heard!=null ? t('Meters heard', st.heard, 'since the board started'+(st.web_clients?', '+st.web_clients+' page(s) open':'')) : '') +
+    t('Uptime', ago(Date.now()-st.uptime_s*1000), st.radio_errors?'<span class="bad">radio errors: '+st.radio_errors+'</span>':'radio ok');
+  $('sWifiState').innerHTML = st.wifi ? '<span class="ok">Connected to '+esc(st.ssid)+', IP '+st.ip+'</span>' : (st.ssid ? '<span class="bad">Not connected to '+esc(st.ssid)+' (check the password; 2.4 GHz networks only)</span>' : 'Not set up yet.');
+  $('sMqttState').innerHTML = st.mqtt ? '<span class="ok">Connected – meters appear in Home Assistant automatically (MQTT integration)</span>' : (st.mqtt_uri ? '<span class="bad">Not connected to '+esc(st.mqtt_uri)+'</span>' : 'Off. Only needed for Home Assistant.');
+  const fill = (id,v) => { const el=$(id); if(document.activeElement!==el && !el.dataset.dirty) el.value = v||''; };
+  fill('sSsid', st.ssid); fill('sMqtt', st.mqtt_uri);
+  $('sShow').parentElement.style.display = st.show===undefined ? 'none' : '';
+  if(document.activeElement!==$('sShow') && st.show) $('sShow').value = st.show;
+  if(st.tz && document.activeElement!==$('sTz')){ const o = Array.from($('sTz').options).find(o=>o.value===st.tz); if(o) $('sTz').value = st.tz; }
+  $('setInfo').textContent = (st.board||'')+' · fw '+(st.fw||'');
+}
+function handleSerialLine(line){
+  line = line.trim(); if(!line) return;
+  if(line[0] !== '{'){ devLog(line); return; }
+  let o; try{ o = JSON.parse(line); }catch(e){ devLog(line); return; }
+  if(o.model){ handleEvent(o); if(!o.replay) devLog(`meter ${o.id}${devNames[o.id]?' ('+devNames[o.id]+')':''}  ${o.volume} ${o.unit}  rssi ${o.rssi}  snr ${o.snr}  fixes ${o.corrections}`+(o.flags1!=null?`  f1 ${o.flags1} f2 ${o.flags2} b9 ${o.b9}`:'')); }
+  else if(o.type === 'status'){ devStatus(o); }
+  else if(o.type === 'meter'){
+    const had = devNames[o.id]; if(o.name) devNames[o.id] = o.name; else delete devNames[o.id];
+    if(o.flow_now!=null && (o.seen===undefined || o.seen)) devFlow[o.id] = { now:o.flow_now, avg:o.flow_lpm, today:o.today_l, t:Date.now() };
+    if(had!==devNames[o.id]) renderAll(); else renderTable(); renderMeterSelect();
+  }
+  else if(o.type === 'raw'){ devLog(`received, not decoded (${o.fail})  rssi ${o.rssi}  snr ${o.snr}  ${o.hex}`); }
+  else devLog((o.type? o.type+': ':'')+(o.msg||line));
+}
+async function serialConnect(){
+  if(!('serial' in navigator)){ alert('This browser cannot open USB serial ports. Please open this page in Chrome or Edge.'); return; }
+  try{
+    if(serPort){ try{ await serPort.close(); }catch(e){} serPort = null; }
+    serPort = await navigator.serial.requestPort();
+    await serPort.open({ baudRate: 115200 });
+  }catch(e){ devLog('serial: '+e.message); $('devPanel').style.display=''; return; }
+  $('devPanel').style.display=''; $('setPanel').style.display=''; $('startPanel').style.display='none';
+  try{ if(ws){ ws.onclose=null; ws.close(); } clearTimeout(wsTimer); }catch(e){}
+  espWanted = false; clearTimeout(espTimer); try{ if(espWs){ espWs.onclose=null; espWs.close(); espWs=null; } }catch(e){}
+  setStatus(true, 'Receiver connected over USB');
+  devLog('connected to USB serial port');
+  const enc = new TextEncoderStream(); enc.readable.pipeTo(serPort.writable); serWriter = enc.writable.getWriter();
+  serialSend('status'); setTimeout(()=>serialSend('meters'), 400);
+  const reader = serPort.readable.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  try{
+    while(true){
+      const { value, done } = await reader.read(); if(done) break;
+      buf += value; let i;
+      while((i = buf.indexOf('\n')) >= 0){ handleSerialLine(buf.slice(0,i)); buf = buf.slice(i+1); }
+    }
+  }catch(e){ devLog('serial closed: '+e.message); }
+  setStatus(false, 'Receiver disconnected – click Connect receiver (USB)'); serWriter = null;
+}
+// ---------- receiver over Wi-Fi (WebSocket) ----------
+let espWs = null, espTimer = null, espWanted = false;
+function wifiConnect(){
+  const host = $('espHost').value.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+  if(!host) return;
+  try{ localStorage.setItem('aradHost', host); }catch(e){}
+  espWanted = true; clearTimeout(espTimer);
+  if(espWs){ try{ espWs.onclose=null; espWs.close(); }catch(e){} }
+  try{ if(ws){ ws.onclose=null; ws.close(); } clearTimeout(wsTimer); }catch(e){}
+  setStatus(false, 'Connecting to '+host+'…');
+  try{ espWs = new WebSocket('ws://'+host+'/ws'); }catch(e){ setStatus(false,'Bad address'); return; }
+  espWs.onopen = () => {
+    setStatus(true, 'Receiver connected over Wi-Fi ('+host+')');
+    $('devPanel').style.display=''; $('setPanel').style.display=''; $('startPanel').style.display='none';
+    devLog('connected to ws://'+host+'/ws');
+  };
+  espWs.onmessage = msg => String(msg.data).split(/\r?\n/).forEach(handleSerialLine);
+  espWs.onclose = () => { espWs = null; if(espWanted){ setStatus(false, 'Receiver '+host+' not reachable – retrying…'); espTimer = setTimeout(wifiConnect, 3000); } };
+  espWs.onerror = () => {};
+}
+$('wifiBtn').onclick = wifiConnect;
+$('espHost').onkeydown = e => { if(e.key==='Enter') wifiConnect(); };
+function serialSend(cmd){
+  if(espWs && espWs.readyState === 1){
+    espWs.send(cmd);
+    devLog('> '+cmd.replace(/^(wifipass|mqttpass)\s.*/, '$1 ••••••'));
+    return true;
+  }
+  if(!serWriter){ alert('Connect to the receiver first (Wi-Fi or USB).'); return false; }
+  serWriter.write(cmd+'\n');
+  devLog('> '+cmd.replace(/^(wifipass|mqttpass)\s.*/, '$1 ••••••'));
+  return true;
+}
+// ---------- settings panel ----------
+function renderMeterSelect(){
+  const sel = $('sMeter'), cur = sel.value;
+  const ids = Array.from(new Set(Object.keys(state.meters).concat(Object.keys(devNames)))).sort();
+  sel.innerHTML = ids.length ? ids.map(id => `<option value="${id}">${id}${devNames[id]?' – '+esc(devNames[id]):''}</option>`).join('') : '<option value="">— no meters heard yet —</option>';
+  if(cur && ids.includes(cur)) sel.value = cur;
+}
+const sendSeq = (cmds) => cmds.reduce((p,c,i)=>p.then(()=>new Promise(r=>setTimeout(()=>{ serialSend(c); r(); }, i?300:0))), Promise.resolve());
+['sSsid','sMqtt','sMuser'].forEach(id => $(id).oninput = () => $(id).dataset.dirty = '1');
+$('sWifiBtn').onclick = () => {
+  const ssid = $('sSsid').value.trim(), pw = $('sWpass').value;
+  if(!ssid){ alert('Enter the Wi-Fi network name.'); return; }
+  if(espWs && !confirm('You are connected over Wi-Fi. If the new network or password is wrong, the board drops off the network and you will need USB to fix it. Continue?')) return;
+  const cmds = ['wifi '+ssid]; if(pw) cmds.push('wifipass '+pw);
+  sendSeq(cmds).then(()=>{ $('sWpass').value=''; delete $('sSsid').dataset.dirty; setTimeout(()=>serialSend('status'), 8000); });
+};
+$('sWifiOff').onclick = () => { if(confirm('Forget the saved Wi-Fi network?')) serialSend('wifi off'); };
+$('sMqttBtn').onclick = () => {
+  const uri = $('sMqtt').value.trim(), u = $('sMuser').value.trim(), pw = $('sMpass').value;
+  if(!uri){ alert('Enter the MQTT broker address (for Home Assistant: the Home Assistant IP address).'); return; }
+  const cmds = []; if(u) cmds.push('mqttuser '+u); if(pw) cmds.push('mqttpass '+pw); cmds.push('mqtt '+uri);
+  sendSeq(cmds).then(()=>{ $('sMpass').value=''; delete $('sMqtt').dataset.dirty; delete $('sMuser').dataset.dirty; setTimeout(()=>serialSend('status'), 5000); });
+};
+$('sMqttOff').onclick = () => serialSend('mqtt off');
+$('sNameBtn').onclick = () => {
+  const id = $('sMeter').value, nm = $('sName').value.trim();
+  if(!id || !nm){ alert('Pick a meter and type a name.'); return; }
+  sendSeq(['name '+id+' '+nm, 'meters']).then(()=>{ $('sName').value=''; });
+};
+$('sUnnameBtn').onclick = () => { const id = $('sMeter').value; if(id) sendSeq(['unname '+id, 'meters']); };
+$('sMeter').onchange = () => { $('sName').value = devNames[$('sMeter').value]||''; };
+$('sShow').onchange = () => sendSeq(['show '+$('sShow').value, 'meters']);
+$('sTz').onchange = () => { $('sTzCustom').style.display = $('sTz').value==='custom' ? '' : 'none'; };
+$('sTzBtn').onclick = () => { const v = $('sTz').value==='custom' ? $('sTzCustom').value.trim() : $('sTz').value; if(v) serialSend('tz '+v); };
+$('sReboot').onclick = () => serialSend('reboot');
+$('sFactory').onclick = () => { if(confirm('Erase Wi-Fi, MQTT, meter names and saved totals on the receiver?')) serialSend('factory'); };
+$('serialBtn').onclick = serialConnect;
+$('cmdBtn').onclick = () => { const v=$('cmdIn').value.trim(); if(v){ serialSend(v); $('cmdIn').value=''; } };
+$('cmdIn').onkeydown = e => { if(e.key==='Enter') $('cmdBtn').click(); };
+
+$('reconnectBtn').onclick = () => { $('startPanel').style.display='none'; connect(); };
+$('wsUrl').onkeydown = e => { if(e.key==='Enter') connect(); };
+window.addEventListener('resize', drawChart);
+setInterval(()=>{ updateAgo(); renderTable(); drawChart(); }, 1000);
+
+$('metricSel').value = state.metric || 'rssi';
+load();
+$('metricSel').value = state.metric || 'rssi';
+renderAll();
+try{ const h = localStorage.getItem('aradHost'); if(h) $('espHost').value = h; }catch(e){}
+// ---------- theme: auto (follows the device) / light / dark ----------
+const THEMES = ['auto','light','dark'], THEME_ICON = {auto:'🌓', light:'☀️', dark:'🌙'};
+function applyTheme(t){
+  if(t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  $('themeBtn').textContent = THEME_ICON[t]; $('themeBtn').title = 'Theme: '+t+' (click to change)';
+  drawChart();
+}
+let theme = 'auto'; try{ theme = localStorage.getItem('aradTheme') || 'auto'; }catch(e){}
+applyTheme(theme);
+$('themeBtn').onclick = () => { theme = THEMES[(THEMES.indexOf(theme)+1) % 3]; try{ localStorage.setItem('aradTheme', theme); }catch(e){} applyTheme(theme); };
+window.matchMedia && matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawChart);
+if(location.hash === '#rtl433') connect();   // open the page as arad_monitor.html#rtl433 to auto-connect to rtl_433
+else if(location.protocol === 'http:' && location.host){ $('espHost').value = location.host; wifiConnect(); }   // served by the board itself
+})();
+</script>
+</body>
+</html>
